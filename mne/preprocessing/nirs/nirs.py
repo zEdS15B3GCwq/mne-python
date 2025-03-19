@@ -111,21 +111,26 @@ def _check_channels_ordered(info, pair_vals, *, throw_errors=True, check_bads=Tr
             throw_errors,
         )
 
+    pair_vals = np.array(pair_vals)
+
     # All continuous wave fNIRS data
     if len(picks_wave):
         error_word = "frequencies"
         use_RE = _S_D_F_RE
         picks = picks_wave
+        if pair_vals.shape not in {(2,), (3,)}:
+            raise ValueError(
+                f"Exactly 2 or 3 {error_word} must exist in info, got {list(pair_vals)}"
+            )
     else:
         error_word = "chromophore"
         use_RE = _S_D_H_RE
         picks = picks_chroma
+        if pair_vals.shape != (2,):
+            raise ValueError(
+                f"Exactly two {error_word} must exist in info, got {list(pair_vals)}"
+            )
 
-    pair_vals = np.array(pair_vals)
-    if pair_vals.shape != (2,):
-        raise ValueError(
-            f"Exactly two {error_word} must exist in info, got {list(pair_vals)}"
-        )
     # In principle we do not need to require that these be sorted --
     # all we need to do is change our sorted() below to make use of a
     # pair_vals.index(...) in a sort key -- but in practice we always want
@@ -145,11 +150,11 @@ def _check_channels_ordered(info, pair_vals, *, throw_errors=True, check_bads=Tr
             f"got {pair_vals} instead"
         )
 
-    if len(picks) % 2 != 0:
+    if len(picks) % len(pair_vals) != 0:
         picks = _throw_or_return_empty(
-            "NIRS channels not ordered correctly. An even number of NIRS "
-            f"channels is required. {len(info.ch_names)} channels were"
-            f"provided",
+            "NIRS channels not ordered correctly. The total number of NIRS "
+            f"channels must be a multiple of {len(pair_vals)}. "
+            f"{len(info.ch_names)} channels were provided.",
             throw_errors,
         )
 
@@ -190,31 +195,59 @@ def _check_channels_ordered(info, pair_vals, *, throw_errors=True, check_bads=Tr
     picks = picks[np.argsort([info["ch_names"][pick] for pick in picks])]
 
     # Validate our paired ordering
-    for ii, jj in zip(picks[::2], picks[1::2]):
-        ch1_name = info["chs"][ii]["ch_name"]
-        ch2_name = info["chs"][jj]["ch_name"]
-        ch1_re = use_RE.match(ch1_name)
-        ch2_re = use_RE.match(ch2_name)
-        ch1_S, ch1_D, ch1_value = ch1_re.groups()[:3]
-        ch2_S, ch2_D, ch2_value = ch2_re.groups()[:3]
-        if len(picks_wave):
-            ch1_value, ch2_value = float(ch1_value), float(ch2_value)
-        if (
-            (ch1_S != ch2_S)
-            or (ch1_D != ch2_D)
-            or (ch1_value != pair_vals[0])
-            or (ch2_value != pair_vals[1])
-        ):
-            picks = _throw_or_return_empty(
-                "NIRS channels not ordered correctly. Channels must be "
-                "ordered as source detector pairs with alternating"
-                f" {error_word} {pair_vals[0]} & {pair_vals[1]}, but got "
-                f"S{ch1_S}_D{ch1_D} pair "
-                f"{repr(ch1_name)} and {repr(ch2_name)}",
-                throw_errors,
-            )
-            break
+    # for ii, jj in zip(picks[::2], picks[1::2]):
+    #     ch1_name = info["chs"][ii]["ch_name"]
+    #     ch2_name = info["chs"][jj]["ch_name"]
+    #     ch1_re = use_RE.match(ch1_name)
+    #     ch2_re = use_RE.match(ch2_name)
+    #     ch1_S, ch1_D, ch1_value = ch1_re.groups()[:3]
+    #     ch2_S, ch2_D, ch2_value = ch2_re.groups()[:3]
+    #     if len(picks_wave):
+    #         ch1_value, ch2_value = float(ch1_value), float(ch2_value)
+    #     if (
+    #         (ch1_S != ch2_S)
+    #         or (ch1_D != ch2_D)
+    #         or (ch1_value != pair_vals[0])
+    #         or (ch2_value != pair_vals[1])
+    #     ):
+    #         picks = _throw_or_return_empty(
+    #             "NIRS channels not ordered correctly. Channels must be "
+    #             "ordered as source detector pairs with alternating"
+    #             f" {error_word} {pair_vals[0]} & {pair_vals[1]}, but got "
+    #             f"S{ch1_S}_D{ch1_D} pair "
+    #             f"{repr(ch1_name)} and {repr(ch2_name)}",
+    #             throw_errors,
+    #         )
+    #         break
+    group_size = len(pair_vals)
+    for group_idx in range(0, len(picks), group_size):
+        group = picks[group_idx : group_idx + group_size]
 
+        # Check the first channel's source and detector to compare with others
+        first_ch_name = info["chs"][group[0]]["ch_name"]
+        first_ch_re = use_RE.match(first_ch_name)
+        first_S, first_D = first_ch_re.groups()[:2]
+
+        # Check all channels in the group
+        for i, pick in enumerate(group):
+            ch_name = info["chs"][pick]["ch_name"]
+            ch_re = use_RE.match(ch_name)
+            ch_S, ch_D, ch_value = ch_re.groups()[:3]
+
+            if len(picks_wave):
+                ch_value = float(ch_value)
+
+            # Verify that S and D are consistent and value matches the expected position in pair_vals
+            if (ch_S != first_S) or (ch_D != first_D) or (ch_value != pair_vals[i]):
+                picks = _throw_or_return_empty(
+                    "NIRS channels not ordered correctly. Channels must be "
+                    f"ordered as source detector groups with {error_word} values "
+                    f"{pair_vals}, but got inconsistent values in group starting with "
+                    f"S{first_S}_D{first_D} (channel {repr(first_ch_name)}). "
+                    f"Problem at channel {repr(ch_name)} with S{ch_S}_D{ch_D} {ch_value}.",
+                    throw_errors,
+                )
+                break
     if check_bads:
         for ii, jj in zip(picks[::2], picks[1::2]):
             want = [info.ch_names[ii], info.ch_names[jj]]

@@ -128,14 +128,15 @@ class RawSNIRF(BaseRaw):
             # Extract wavelengths
             fnirs_wavelengths = np.array(dat.get("nirs/probe/wavelengths"))
             fnirs_wavelengths = [int(w) for w in fnirs_wavelengths]
-            if len(fnirs_wavelengths) != 2:
+            # if len(fnirs_wavelengths) != 2:
+            if len(fnirs_wavelengths) not in {2, 3}:
                 raise RuntimeError(
                     f"The data contains "
                     f"{len(fnirs_wavelengths)}"
                     f" wavelengths: {fnirs_wavelengths}. "
                     f"MNE only supports reading continuous"
                     " wave amplitude SNIRF files "
-                    "with two wavelengths."
+                    "with two or three wavelengths."
                 )
 
             # Extract channels
