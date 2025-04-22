@@ -65,19 +65,83 @@ def beer_lambert_law(raw, ppf=6.0):
             " unit other than meters."
         )
     rename = dict()
-    for ii, jj in zip(picks[::2], picks[1::2]):
-        EL = abs_coef * distances[ii] * ppf
+
+>>>>>>>>>>>>>>>>>>>>>>>>>
+    # Number of wavelengths per location
+    n_freqs = len(freqs)
+
+    # Total number of measurement points (source-detector pairs)
+    n_pairs = len(picks) // n_freqs
+
+    # Process data in groups of n_freqs channels (one group per location)
+    for pair_idx in range(n_pairs):
+        # Get the channel indices for this pair
+        pick_group = picks[pair_idx * n_freqs:(pair_idx + 1) * n_freqs]
+
+        # Get distance (same for all channels at this location)
+        dist = distances[pick_group[0]]
+
+        # Calculate the extinction coefficient matrix (wavelengths × chromophores)
+        EL = abs_coef * dist * ppf
         iEL = pinv(EL)
 
-        raw._data[[ii, jj]] = iEL @ raw._data[[ii, jj]] * 1e-3
+        # Apply the conversion to the data
+        raw._data[pick_group] = iEL @ raw._data[pick_group] * 1e-3
 
-        # Update channel information
-        coil_dict = dict(hbo=FIFF.FIFFV_COIL_FNIRS_HBO, hbr=FIFF.FIFFV_COIL_FNIRS_HBR)
-        for ki, kind in zip((ii, jj), ("hbo", "hbr")):
-            ch = raw.info["chs"][ki]
-            ch.update(coil_type=coil_dict[kind], unit=FIFF.FIFF_UNIT_MOL)
-            new_name = f"{ch['ch_name'].split(' ')[0]} {kind}"
+        # The first two channels in each group are mapped to HbO and HbR
+        chromophores = ["hbo", "hbr"]
+        coil_dict = {
+            "hbo": FIFF.FIFFV_COIL_FNIRS_HBO,
+            "hbr": FIFF.FIFFV_COIL_FNIRS_HBR
+        }
+
+        # Get original channel name base (without wavelength indicator)
+        ch_name_base = raw.info["chs"][pick_group[0]]["ch_name"].split()[0]
+
+        for chrom_idx, kind in enumerate(chromophores):
+            if chrom_idx < len(pick_group):  # Ensure we don't exceed available channels
+                ch_idx = pick_group[chrom_idx]  # Use first channels for HbO and HbR
+                ch = raw.info["chs"][ch_idx]
+                ch.update(coil_type=coil_dict[kind], unit=FIFF.FIFF_UNIT_MOL)
+                new_name = f"{ch_name_base} {kind}"
+                rename[ch["ch_name"]] = new_name
+
+# Old code (original implementation):
+"""
+    data = list()
+    for ii, jj in zip(picks[::2], picks[1::2]):
+        dist = distances[ii]
+        # Photon path length for each wavelength [m]
+        L = dist * ppf
+        # Convert to Absorbance change
+        a = abs_coef * L
+        # Concentration change: (μM)
+        c = pinv(a) @ raw._data[[ii, jj]] * 1e-3
+        data.append(c)
+    data = np.vstack(data)
+
+    # Update info
+    for ii, jj in zip(picks[::2], picks[1::2]):
+        raw._data[[ii, jj]] = data[:2]
+        data = data[2:]
+
+        # Extract source, detector, and wavelength information
+        info_ii = raw.info["chs"][ii]
+        s_i, d_i, w_i = [info_ii["ch_name"].split()[ii] for ii in range(3)]
+
+        for ch_idx, (idx, kind) in enumerate(
+            zip([ii, jj], ["hbo", "hbr"])
+        ):
+            ch = raw.info["chs"][idx]
+            if kind == "hbo":
+                ch.update(coil_type=FIFF.FIFFV_COIL_FNIRS_HBO)
+            else:
+                ch.update(coil_type=FIFF.FIFFV_COIL_FNIRS_HBR)
+            ch.update(unit=FIFF.FIFF_UNIT_MOL)
+            new_name = f"{s_i} {d_i} {kind}"
             rename[ch["ch_name"]] = new_name
+"""
+>>>>>>>>>>>>>>>>>>>>>>>>>
     raw.rename_channels(rename)
 
     # Validate the format of data after transformation is valid
