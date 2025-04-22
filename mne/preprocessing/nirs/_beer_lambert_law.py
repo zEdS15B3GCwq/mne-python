@@ -35,17 +35,17 @@ def beer_lambert_law(raw, ppf=6.0):
     raw = raw.copy().load_data()
     _validate_type(raw, BaseRaw, "raw")
     _validate_type(ppf, ("numeric", "array-like"), "ppf")
-    ppf = np.array(ppf, float)
-    if ppf.ndim == 0:  # upcast single float to shape (2,)
-        ppf = np.array([ppf, ppf])
-    if ppf.shape != (2,):
-        raise ValueError(
-            f"ppf must be float or array-like of shape (2,), got shape {ppf.shape}"
-        )
-    ppf = ppf[:, np.newaxis]  # shape (2, 1)
     picks = _validate_nirs_info(raw.info, fnirs="od", which="Beer-lambert")
     # This is the one place we *really* need the actual/accurate frequencies
     freqs = np.array([raw.info["chs"][pick]["loc"][9] for pick in picks], float)
+    ppf = np.array(ppf, float)
+    if ppf.ndim == 0:  # upcast single float to (number of freqs, )
+        ppf = np.repeat(ppf, len(freqs))
+    if ppf.shape != (len(freqs),):
+        raise ValueError(
+            f"ppf must be float or array-like of shape ({len(freqs),},), got shape {ppf.shape}"
+        )
+    ppf = ppf[:, np.newaxis]  # shape (len(freqs), 1)
     abs_coef = _load_absorption(freqs)
     distances = source_detector_distances(raw.info, picks="all")
     bad = ~np.isfinite(distances[picks])
@@ -85,7 +85,7 @@ def beer_lambert_law(raw, ppf=6.0):
     return raw
 
 
-def _load_absorption(freqs):
+def _load_absorption(freqs: np.ndarray) -> np.ndarray:
     """Load molar extinction coefficients."""
     # Data from https://omlc.org/spectra/hemoglobin/summary.html
     # The text was copied to a text file. The text before and
@@ -104,12 +104,7 @@ def _load_absorption(freqs):
     interp_hbo = interp1d(a[:, 0], a[:, 1], kind="linear")
     interp_hb = interp1d(a[:, 0], a[:, 2], kind="linear")
 
-    ext_coef = np.array(
-        [
-            [interp_hbo(freqs[0]), interp_hb(freqs[0])],
-            [interp_hbo(freqs[1]), interp_hb(freqs[1])],
-        ]
-    )
+    ext_coef = np.array([[interp_hbo(freq), interp_hb(freq)] for freq in freqs])
     abs_coef = ext_coef * 0.2303
 
     return abs_coef
