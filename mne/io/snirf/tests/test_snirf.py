@@ -8,13 +8,19 @@ from contextlib import nullcontext
 
 import numpy as np
 import pytest
-from numpy.testing import assert_allclose, assert_almost_equal, assert_equal
+from numpy.testing import (
+    assert_allclose,
+    assert_almost_equal,
+    assert_array_equal,
+    assert_equal,
+)
 
 from mne._fiff.constants import FIFF
 from mne.datasets.testing import data_path, requires_testing_data
 from mne.io import read_raw_nirx, read_raw_snirf
 from mne.io.tests.test_raw import _test_raw_reader
 from mne.preprocessing.nirs import (
+    _channel_frequencies,
     _reorder_nirx,
     beer_lambert_law,
     optical_density,
@@ -73,6 +79,17 @@ def _get_loc(raw, ch_name):
     return raw.copy().pick(ch_name).info["chs"][0]["loc"]
 
 
+def _run_basic_processing(fname):
+    raw = read_raw_snirf(fname, preload=True)
+    if "fnirs_cw_amplitude" in raw:
+        raw = optical_density(raw)
+    if "fnirs_od" in raw:
+        raw = beer_lambert_law(raw, ppf=6)
+    assert "hbo" in raw
+    assert "hbr" in raw
+    return raw
+
+
 @requires_testing_data
 @pytest.mark.filterwarnings("ignore:.*contains 2D location.*:")
 @pytest.mark.filterwarnings("ignore:.*measurement date.*:")
@@ -93,14 +110,12 @@ def _get_loc(raw, ch_name):
 )
 def test_basic_reading_and_min_process(fname):
     """Test reading SNIRF files and minimum typical processing."""
-    raw = read_raw_snirf(fname, preload=True)
-    # SNIRF data can contain several types, so only apply appropriate functions
-    if "fnirs_cw_amplitude" in raw:
-        raw = optical_density(raw)
-    if "fnirs_od" in raw:
-        raw = beer_lambert_law(raw, ppf=6)
-    assert "hbo" in raw
-    assert "hbr" in raw
+    _run_basic_processing(fname)
+
+
+def test_basic_reading_and_min_process_multi(multi_wavelength_snirf_fname):
+    """Ensure synthetic multi-wavelength SNIRF file passes basic processing."""
+    _run_basic_processing(multi_wavelength_snirf_fname)
 
 
 @requires_testing_data
@@ -202,6 +217,19 @@ def test_snirf_basic():
     )
 
     assert "fnirs_cw_amplitude" in raw
+
+
+def test_snirf_multiple_wavelengths(multi_wavelength_snirf_fname):
+    """Test importing synthetic SNIRF files with >=3 wavelengths."""
+    raw = read_raw_snirf(multi_wavelength_snirf_fname, preload=True)
+    assert raw._data.shape == (6, 32)
+    assert raw.info["sfreq"] == pytest.approx(10.0)
+    assert raw.info["ch_names"][:3] == ["S1_D1 700", "S1_D1 730", "S1_D1 850"]
+    freqs = np.unique(_channel_frequencies(raw.info))
+    assert_array_equal(freqs, [700, 730, 850])
+    distances = source_detector_distances(raw.info)
+    assert len(distances) == len(raw.ch_names)
+    assert_allclose(distances[:3], distances[3:])
 
 
 @requires_testing_data

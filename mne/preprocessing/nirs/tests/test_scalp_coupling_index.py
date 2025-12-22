@@ -76,3 +76,30 @@ def test_scalp_coupling_index(fname, fmt, tmp_path):
     raw = beer_lambert_law(raw, ppf=6)
     with pytest.raises(RuntimeError, match="Scalp"):
         scalp_coupling_index(raw)
+
+
+def test_scalp_coupling_index_multi_wavelength(multi_wavelength_raw):
+    """Validate SCI min-correlation logic for >=3 wavelengths."""
+    raw = optical_density(multi_wavelength_raw.copy())
+    times = np.arange(raw.n_times) / raw.info["sfreq"]
+    signal = np.sin(2 * np.pi * 1.0 * times)
+    raw._data[0] = signal
+    raw._data[1] = signal * 0.5 + 0.01
+    raw._data[2] = -signal
+    raw._data[3] = signal * 0.2
+    raw._data[4] = -signal * 0.2
+    raw._data[5] = np.cos(2 * np.pi * 0.5 * times)
+
+    sci = scalp_coupling_index(raw)
+
+    def _expected(group):
+        ixs = np.triu_indices(group.shape[0], k=1)
+        corrs = []
+        for ii, jj in zip(*ixs):
+            corrs.append(np.corrcoef(group[ii], group[jj])[0][1])
+        return np.min(corrs)
+
+    expected_first = _expected(raw._data[:3])
+    expected_second = _expected(raw._data[3:6])
+    assert_allclose(sci[:3], expected_first, atol=0.05)
+    assert_allclose(sci[3:], expected_second, atol=0.05)

@@ -11,7 +11,7 @@ from mne._fiff.constants import FIFF
 from mne._fiff.pick import _picks_to_idx
 from mne.datasets import testing
 from mne.datasets.testing import data_path
-from mne.io import RawArray, read_raw_nirx
+from mne.io import read_raw_nirx
 from mne.preprocessing.nirs import (
     _channel_chromophore,
     _channel_frequencies,
@@ -35,6 +35,7 @@ fname_nirx_15_2 = (
 fname_nirx_15_2_short = (
     data_path(download=False) / "NIRx" / "nirscout" / "nirx_15_2_recording_w_short"
 )
+_SYNTHETIC_MULTI = "synthetic_multi"
 
 
 @testing.requires_testing_data
@@ -169,52 +170,59 @@ def test_fnirs_spread_bads(fname):
 
 @testing.requires_testing_data
 @pytest.mark.parametrize(
-    "fname", ([fname_nirx_15_2_short, fname_nirx_15_2, fname_nirx_15_0])
+    "dataset",
+    (
+        pytest.param(fname_nirx_15_2_short, id="nirx_15_2_short"),
+        pytest.param(fname_nirx_15_2, id="nirx_15_2"),
+        pytest.param(fname_nirx_15_0, id="nirx_15_0"),
+        pytest.param(_SYNTHETIC_MULTI, id=_SYNTHETIC_MULTI),
+    ),
 )
-def test_fnirs_channel_naming_and_order_readers(fname):
+def test_fnirs_channel_naming_and_order_readers(dataset, multi_wavelength_raw):
     """Ensure fNIRS channel checking on standard readers."""
-    # fNIRS data requires specific channel naming and ordering.
+    if dataset == _SYNTHETIC_MULTI:
+        raw = multi_wavelength_raw.copy()
+    else:
+        raw = read_raw_nirx(dataset)
 
-    # All standard readers should pass tests
-    raw = read_raw_nirx(fname)
     freqs = np.unique(_channel_frequencies(raw.info))
-    assert_array_equal(freqs, [760, 850])
+    if len(freqs) == 2:
+        assert_array_equal(freqs, [760, 850])
+    else:
+        assert_array_equal(freqs, [700, 730, 850])
     chroma = np.unique(_channel_chromophore(raw.info))
     assert len(chroma) == 0
 
     picks = _check_channels_ordered(raw.info, freqs)
-    assert len(picks) == len(raw.ch_names)  # as all fNIRS only data
+    assert len(picks) == len(raw.ch_names)
 
-    # Check that dropped channels are detected
-    # For each source detector pair there must be two channels,
-    # removing one should throw an error.
     raw_dropped = raw.copy().drop_channels(raw.ch_names[4])
     with pytest.raises(ValueError, match="not ordered correctly"):
         _check_channels_ordered(raw_dropped.info, freqs)
 
-    # The ordering must be increasing for the pairs, if provided
-    raw_names_reversed = raw.copy().ch_names
-    raw_names_reversed.reverse()
-    raw_reversed = raw.copy().pick(raw_names_reversed)
-    with pytest.raises(ValueError, match="The frequencies.*sorted.*"):
-        _check_channels_ordered(raw_reversed.info, [850, 760])
-    # So if we flip the second argument it should pass again
-    picks = _check_channels_ordered(raw_reversed.info, freqs)
-    got_first = set(raw_reversed.ch_names[pick].split()[1] for pick in picks[::2])
-    assert got_first == {"760"}
-    got_second = set(raw_reversed.ch_names[pick].split()[1] for pick in picks[1::2])
-    assert got_second == {"850"}
+    if len(freqs) == 2:
+        raw_names_reversed = raw.copy().ch_names
+        raw_names_reversed.reverse()
+        raw_reversed = raw.copy().pick(raw_names_reversed)
+        with pytest.raises(ValueError, match="The frequencies.*sorted.*"):
+            _check_channels_ordered(raw_reversed.info, [850, 760])
+        picks = _check_channels_ordered(raw_reversed.info, freqs)
+        got_first = set(raw_reversed.ch_names[pick].split()[1] for pick in picks[::2])
+        assert got_first == {"760"}
+        got_second = set(raw_reversed.ch_names[pick].split()[1] for pick in picks[1::2])
+        assert got_second == {"850"}
 
-    # Check on OD data
     raw = optical_density(raw)
     freqs = np.unique(_channel_frequencies(raw.info))
-    assert_array_equal(freqs, [760, 850])
+    if len(freqs) == 2:
+        assert_array_equal(freqs, [760, 850])
+    else:
+        assert_array_equal(freqs, [700, 730, 850])
     chroma = np.unique(_channel_chromophore(raw.info))
     assert len(chroma) == 0
     picks = _check_channels_ordered(raw.info, freqs)
-    assert len(picks) == len(raw.ch_names)  # as all fNIRS only data
+    assert len(picks) == len(raw.ch_names)
 
-    # Check on haemoglobin data
     raw = beer_lambert_law(raw)
     freqs = np.unique(_channel_frequencies(raw.info))
     assert len(freqs) == 0
@@ -227,89 +235,40 @@ def test_fnirs_channel_naming_and_order_readers(fname):
         _check_channels_ordered(raw.info, ["hbr", "hbo"])
 
 
-def test_fnirs_channel_naming_and_order_custom_raw():
+def test_fnirs_channel_naming_and_order_custom_raw(
+    fnirs_base_cw_raw, multi_wavelength_raw
+):
     """Ensure fNIRS channel checking on manually created data."""
-    data = np.random.normal(size=(6, 10))
-
-    # Start with a correctly named raw intensity dataset
-    # These are the steps required to build an fNIRS Raw object from scratch
-    ch_names = [
-        "S1_D1 760",
-        "S1_D1 850",
-        "S2_D1 760",
-        "S2_D1 850",
-        "S3_D1 760",
-        "S3_D1 850",
-    ]
-    ch_types = np.repeat("fnirs_cw_amplitude", 6)
-    info = create_info(ch_names=ch_names, ch_types=ch_types, sfreq=1.0)
-    raw = RawArray(data, info, verbose=True)
-    freqs = np.tile([760, 850], 3)
-    for idx, f in enumerate(freqs):
-        raw.info["chs"][idx]["loc"][9] = f
-
+    raw = fnirs_base_cw_raw.copy()
     freqs = np.unique(_channel_frequencies(raw.info))
     picks = _check_channels_ordered(raw.info, freqs)
     assert len(picks) == len(raw.ch_names)
-    assert len(picks) == 6
 
-    # Different systems use different frequencies, so ensure that works
-    ch_names = [
-        "S1_D1 920",
-        "S1_D1 850",
-        "S2_D1 920",
-        "S2_D1 850",
-        "S3_D1 920",
-        "S3_D1 850",
-    ]
-    ch_types = np.repeat("fnirs_cw_amplitude", 6)
-    info = create_info(ch_names=ch_names, ch_types=ch_types, sfreq=1.0)
-    raw = RawArray(data, info, verbose=True)
-    freqs = np.tile([920, 850], 3)
-    for idx, f in enumerate(freqs):
-        raw.info["chs"][idx]["loc"][9] = f
+    # Different systems use different wavelengths
+    raw_alt = fnirs_base_cw_raw.copy()
+    alt_freqs = np.tile([920.0, 850.0], 3)
+    rename = {}
+    for idx, ch_name in enumerate(raw_alt.ch_names):
+        base = ch_name.split()[0]
+        rename[ch_name] = f"{base} {int(alt_freqs[idx])}"
+        raw_alt.info["chs"][idx]["loc"][9] = alt_freqs[idx]
+    raw_alt.rename_channels(rename)
+    picks = _check_channels_ordered(raw_alt.info, [850, 920])
+    assert len(picks) == len(raw_alt.ch_names)
 
-    picks = _check_channels_ordered(raw.info, [850, 920])
-    assert len(picks) == len(raw.ch_names)
-    assert len(picks) == 6
-
-    # Catch expected errors
-
-    # The frequencies named in the channel names must match the info loc field
-    ch_names = [
-        "S1_D1 760",
-        "S1_D1 850",
-        "S2_D1 760",
-        "S2_D1 850",
-        "S3_D1 760",
-        "S3_D1 850",
-    ]
-    ch_types = np.repeat("fnirs_cw_amplitude", 6)
-    info = create_info(ch_names=ch_names, ch_types=ch_types, sfreq=1.0)
-    raw = RawArray(data, info, verbose=True)
-    freqs = np.tile([920, 850], 3)
-    for idx, f in enumerate(freqs):
-        raw.info["chs"][idx]["loc"][9] = f
+    raw_mismatch = fnirs_base_cw_raw.copy()
+    raw_mismatch.info["chs"][0]["loc"][9] = 920.0
     with pytest.raises(ValueError, match="not ordered"):
-        _check_channels_ordered(raw.info, [850, 920])
+        _check_channels_ordered(raw_mismatch.info, [850, 920])
 
-    # Catch if someone doesn't set the info field
-    ch_names = [
-        "S1_D1 760",
-        "S1_D1 850",
-        "S2_D1 760",
-        "S2_D1 850",
-        "S3_D1 760",
-        "S3_D1 850",
-    ]
-    ch_types = np.repeat("fnirs_cw_amplitude", 6)
-    info = create_info(ch_names=ch_names, ch_types=ch_types, sfreq=1.0)
-    raw = RawArray(data, info, verbose=True)
+    raw_missing = fnirs_base_cw_raw.copy()
+    for ch in raw_missing.info["chs"]:
+        ch["loc"][9] = 0.0
     with pytest.raises(ValueError, match="missing wavelength information"):
-        _check_channels_ordered(raw.info, [850, 920])
+        _check_channels_ordered(raw_missing.info, [850, 920])
 
-    # I have seen data encoded not in alternating frequency, but blocked.
-    ch_names = [
+    raw_block = fnirs_base_cw_raw.copy()
+    block_names = [
         "S1_D1 760",
         "S2_D1 760",
         "S3_D1 760",
@@ -317,43 +276,33 @@ def test_fnirs_channel_naming_and_order_custom_raw():
         "S2_D1 850",
         "S3_D1 850",
     ]
-    ch_types = np.repeat("fnirs_cw_amplitude", 6)
-    info = create_info(ch_names=ch_names, ch_types=ch_types, sfreq=1.0)
-    raw = RawArray(data, info, verbose=True)
-    freqs = np.repeat([760, 850], 3)
-    for idx, f in enumerate(freqs):
-        raw.info["chs"][idx]["loc"][9] = f
-    _check_channels_ordered(raw.info, [760, 850])
+    raw_block.rename_channels(dict(zip(raw_block.ch_names, block_names)))
+    block_freqs = np.repeat([760, 850], 3)
+    for ch, freq in zip(raw_block.info["chs"], block_freqs):
+        ch["loc"][9] = freq
+    _check_channels_ordered(raw_block.info, [760, 850])
+    raw_block.pick(picks=[0, 3, 1, 4, 2, 5])
+    _check_channels_ordered(raw_block.info, [760, 850])
+
+    raw_multi = multi_wavelength_raw.copy()
+    freqs_multi = np.unique(_channel_frequencies(raw_multi.info))
+    picks = _check_channels_ordered(raw_multi.info, freqs_multi)
+    assert len(picks) == len(raw_multi.ch_names)
+    with pytest.raises(ValueError, match="sorted"):
+        _check_channels_ordered(raw_multi.info, freqs_multi[::-1])
 
 
-def test_fnirs_channel_naming_and_order_custom_optical_density():
+def test_fnirs_channel_naming_and_order_custom_optical_density(
+    fnirs_base_od_raw, fnirs_base_chroma_raw
+):
     """Ensure fNIRS channel checking on manually created data."""
-    data = np.random.normal(size=(6, 10))
-
-    # Start with a correctly named raw intensity dataset
-    # These are the steps required to build an fNIRS Raw object from scratch
-    ch_names = [
-        "S1_D1 760",
-        "S1_D1 850",
-        "S2_D1 760",
-        "S2_D1 850",
-        "S3_D1 760",
-        "S3_D1 850",
-    ]
-    ch_types = np.repeat("fnirs_od", 6)
-    info = create_info(ch_names=ch_names, ch_types=ch_types, sfreq=1.0)
-    raw = RawArray(data, info, verbose=True)
-    freqs = np.tile([760, 850], 3)
-    for idx, f in enumerate(freqs):
-        raw.info["chs"][idx]["loc"][9] = f
-
+    raw = fnirs_base_od_raw.copy()
     freqs = np.unique(_channel_frequencies(raw.info))
     picks = _check_channels_ordered(raw.info, freqs)
     assert len(picks) == len(raw.ch_names)
-    assert len(picks) == 6
 
-    # Check block naming for optical density
-    ch_names = [
+    raw_block = fnirs_base_od_raw.copy()
+    block_names = [
         "S1_D1 760",
         "S2_D1 760",
         "S3_D1 760",
@@ -361,60 +310,29 @@ def test_fnirs_channel_naming_and_order_custom_optical_density():
         "S2_D1 850",
         "S3_D1 850",
     ]
-    ch_types = np.repeat("fnirs_od", 6)
-    info = create_info(ch_names=ch_names, ch_types=ch_types, sfreq=1.0)
-    raw = RawArray(data, info, verbose=True)
-    freqs = np.repeat([760, 850], 3)
-    for idx, f in enumerate(freqs):
-        raw.info["chs"][idx]["loc"][9] = f
-    # no problems here
-    _check_channels_ordered(raw.info, [760, 850])
-    # or with this (nirx) reordering
-    raw.pick(picks=[0, 3, 1, 4, 2, 5])
-    _check_channels_ordered(raw.info, [760, 850])
+    raw_block.rename_channels(dict(zip(raw_block.ch_names, block_names)))
+    block_freqs = np.repeat([760, 850], 3)
+    for ch, freq in zip(raw_block.info["chs"], block_freqs):
+        ch["loc"][9] = freq
+    _check_channels_ordered(raw_block.info, [760, 850])
+    raw_block.pick(picks=[0, 3, 1, 4, 2, 5])
+    _check_channels_ordered(raw_block.info, [760, 850])
 
-    # Check that if you mix types you get an error
-    ch_names = [
-        "S1_D1 hbo",
-        "S1_D1 hbr",
-        "S2_D1 hbo",
-        "S2_D1 hbr",
-        "S3_D1 hbo",
-        "S3_D1 hbr",
-    ]
-    ch_types = np.tile(["hbo", "hbr"], 3)
-    info = create_info(ch_names=ch_names, ch_types=ch_types, sfreq=1.0)
-    raw2 = RawArray(data, info, verbose=True)
-    raw.add_channels([raw2])
+    raw_mixed = fnirs_base_od_raw.copy()
+    raw_mixed.add_channels([fnirs_base_chroma_raw.copy()])
     with pytest.raises(ValueError, match="does not support a combination"):
-        _check_channels_ordered(raw.info, [760, 850])
+        _check_channels_ordered(raw_mixed.info, [760, 850])
 
 
-def test_fnirs_channel_naming_and_order_custom_chroma():
+def test_fnirs_channel_naming_and_order_custom_chroma(fnirs_base_chroma_raw):
     """Ensure fNIRS channel checking on manually created data."""
-    data = np.random.RandomState(0).randn(6, 10)
-
-    # Start with a correctly named raw intensity dataset
-    # These are the steps required to build an fNIRS Raw object from scratch
-    ch_names = [
-        "S1_D1 hbo",
-        "S1_D1 hbr",
-        "S2_D1 hbo",
-        "S2_D1 hbr",
-        "S3_D1 hbo",
-        "S3_D1 hbr",
-    ]
-    ch_types = np.tile(["hbo", "hbr"], 3)
-    info = create_info(ch_names=ch_names, ch_types=ch_types, sfreq=1.0)
-    raw = RawArray(data, info, verbose=True)
-
+    raw = fnirs_base_chroma_raw.copy()
     chroma = np.unique(_channel_chromophore(raw.info))
     picks = _check_channels_ordered(raw.info, chroma)
     assert len(picks) == len(raw.ch_names)
-    assert len(picks) == 6
 
-    # Test block creation fails
-    ch_names = [
+    raw_block = fnirs_base_chroma_raw.copy()
+    block_names = [
         "S1_D1 hbo",
         "S2_D1 hbo",
         "S3_D1 hbo",
@@ -422,47 +340,29 @@ def test_fnirs_channel_naming_and_order_custom_chroma():
         "S2_D1 hbr",
         "S3_D1 hbr",
     ]
-    ch_types = np.repeat(["hbo", "hbr"], 3)
-    info = create_info(ch_names=ch_names, ch_types=ch_types, sfreq=1.0)
-    raw = RawArray(data, info, verbose=True)
-    # no issue here
-    _check_channels_ordered(raw.info, ["hbo", "hbr"])
-    # reordering okay, too
-    raw.pick(picks=[0, 3, 1, 4, 2, 5])
-    _check_channels_ordered(raw.info, ["hbo", "hbr"])
-    # Wrong names should fail
+    raw_block.rename_channels(dict(zip(raw_block.ch_names, block_names)))
+    _check_channels_ordered(raw_block.info, ["hbo", "hbr"])
+    raw_block.pick(picks=[0, 3, 1, 4, 2, 5])
+    _check_channels_ordered(raw_block.info, ["hbo", "hbr"])
     with pytest.raises(ValueError, match="chromophore in info"):
-        _check_channels_ordered(raw.info, ["hbb", "hbr"])
+        _check_channels_ordered(raw_block.info, ["hbb", "hbr"])
 
-    # Test weird naming
-    ch_names = [
-        "S1_D1 hbb",
-        "S1_D1 hbr",
-        "S2_D1 hbb",
-        "S2_D1 hbr",
-        "S3_D1 hbb",
-        "S3_D1 hbr",
-    ]
-    ch_types = np.tile(["hbo", "hbr"], 3)
-    info = create_info(ch_names=ch_names, ch_types=ch_types, sfreq=1.0)
-    raw = RawArray(data, info, verbose=True)
+    raw_bad_name = fnirs_base_chroma_raw.copy()
+    rename = {name: name.replace("hbo", "hbb") for name in raw_bad_name.ch_names}
+    raw_bad_name.rename_channels(rename)
     with pytest.raises(ValueError, match="naming conventions"):
-        _check_channels_ordered(raw.info, ["hbo", "hbr"])
+        _check_channels_ordered(raw_bad_name.info, ["hbo", "hbr"])
 
-    # Check more weird naming
-    ch_names = [
-        "S1_DX hbo",
-        "S1_DX hbr",
-        "S2_D1 hbo",
-        "S2_D1 hbr",
-        "S3_D1 hbo",
-        "S3_D1 hbr",
-    ]
-    ch_types = np.tile(["hbo", "hbr"], 3)
-    info = create_info(ch_names=ch_names, ch_types=ch_types, sfreq=1.0)
-    raw = RawArray(data, info, verbose=True)
+    raw_bad_det = fnirs_base_chroma_raw.copy()
+    rename = {}
+    for name in raw_bad_det.ch_names:
+        base, chrom = name.split()
+        src, det = base.split("_")
+        if src == "S1":
+            rename[name] = f"S1_DX {chrom}"
+    raw_bad_det.rename_channels(rename)
     with pytest.raises(ValueError, match="can not be parsed"):
-        _check_channels_ordered(raw.info, ["hbo", "hbr"])
+        _check_channels_ordered(raw_bad_det.info, ["hbo", "hbr"])
 
 
 def test_optode_names():

@@ -103,3 +103,13 @@ def test_beer_lambert_v_matlab():
             + matlab_data["type"][idx]
         )
         assert raw.info["ch_names"][idx] == matlab_name
+
+
+def test_beer_lambert_multi_wavelength(multi_wavelength_raw):
+    """Ensure Beer-Lambert retains HbO/HbR with >=3 wavelengths."""
+    raw = optical_density(multi_wavelength_raw.copy())
+    raw = beer_lambert_law(raw, ppf=0.6)
+    assert set(raw.get_channel_types()) == {"hbo", "hbr"}
+    # Each source-detector pair should only contribute HbO/HbR after conversion
+    assert len(raw.ch_names) == 4
+    assert all(name.endswith(" hbo") or name.endswith(" hbr") for name in raw.ch_names)
