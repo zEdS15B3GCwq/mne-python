@@ -91,8 +91,8 @@ def fixture_multi_wavelength_snirf_fname(tmp_path_factory):
 
     # 32 mwasurements with 2 source-detector pairs, each with 3 wavelengths
     n_times = 32
-    n_channels = 6
     n_freq = 3
+    n_channels = 2 * n_freq
 
     with snirf.Snirf(str(fname), "w") as f:
         f.nirs.appendGroup()
@@ -162,7 +162,10 @@ def test_basic_reading_and_min_process(fname):
 
 
 def test_basic_reading_and_min_process_multi(multi_wavelength_snirf_fname):
-    """Ensure synthetic multi-wavelength SNIRF file passes basic processing."""
+    """Ensure synthetic multi-wavelength SNIRF file passes basic processing.
+
+    Same tests as in _run_basic_processing but with checks for number of channels.
+    """
     raw = read_raw_snirf(multi_wavelength_snirf_fname, preload=True)
     assert "fnirs_cw_amplitude" in raw
     assert len(raw.ch_names) == 6
@@ -274,19 +277,6 @@ def test_snirf_basic():
     )
 
     assert "fnirs_cw_amplitude" in raw
-
-
-def test_snirf_multiple_wavelengths(multi_wavelength_snirf_fname):
-    """Test importing synthetic SNIRF files with >=3 wavelengths."""
-    raw = read_raw_snirf(multi_wavelength_snirf_fname, preload=True)
-    assert raw._data.shape == (6, 32)
-    assert raw.info["sfreq"] == pytest.approx(1.0)
-    assert raw.info["ch_names"][:3] == ["S1_D1 700", "S1_D1 730", "S1_D1 760"]
-    assert len(raw.ch_names) == 6
-    freqs = np.unique(_channel_frequencies(raw.info))
-    assert_array_equal(freqs, [700, 730, 760])
-    distances = source_detector_distances(raw.info)
-    assert len(distances) == len(raw.ch_names)
 
 
 @requires_testing_data
@@ -659,3 +649,16 @@ def test_sample_rate_jitter(tmp_path):
         f.create_dataset("nirs/data1/time", data=unacceptable_time_jitter)
     with pytest.warns(RuntimeWarning, match="non-uniformly-sampled data"):
         read_raw_snirf(new_file, verbose=True)
+
+
+def test_snirf_multiple_wavelengths(multi_wavelength_snirf_fname):
+    """Test importing synthetic SNIRF files with >=3 wavelengths."""
+    raw = read_raw_snirf(multi_wavelength_snirf_fname, preload=True)
+    assert raw._data.shape == (6, 32)
+    assert raw.info["sfreq"] == pytest.approx(1.0)
+    assert raw.info["ch_names"][:3] == ["S1_D1 700", "S1_D1 730", "S1_D1 760"]
+    assert len(raw.ch_names) == 6
+    freqs = np.unique(_channel_frequencies(raw.info))
+    assert_array_equal(freqs, [700, 730, 760])
+    distances = source_detector_distances(raw.info)
+    assert len(distances) == len(raw.ch_names)
