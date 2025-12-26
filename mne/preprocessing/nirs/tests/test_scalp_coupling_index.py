@@ -97,27 +97,27 @@ def test_scalp_coupling_index_multi_wavelength(multi_wavelength_raw):
 
     # pre-determined expected results
     expected = []
-    # group 1: perfect correlation
+    # group 1: perfect correlation; sci = 1
     raw._data[0] = signal
     raw._data[1] = signal
     raw._data[2] = signal
     expected.extend([1.0] * 3)
-    # group 2: scale invariance
+    # group 2: scale invariance; sci = 1
     raw._data[3] = signal
     raw._data[4] = signal * 0.3
     raw._data[5] = signal
     expected.extend([1.0] * 3)
-    # group 3: anti-correlation
+    # group 3: anti-correlation; minimum value taken, sci = -1
     raw._data[6] = signal
     raw._data[7] = signal
     raw._data[8] = -signal
     expected.extend([-1.0] * 3)
-    # group 4: one zero std channel
+    # group 4: one zero std channel; minimum value is sci = 0
     raw._data[9] = 0.0
     raw._data[10] = signal
     raw._data[11] = signal
     expected.extend([0.0] * 3)
-    # group 5: three zero std channels
+    # group 5: three zero std channels; all sci = 0
     raw._data[12] = 0.0
     raw._data[13] = 1.0
     raw._data[14] = 2.0
@@ -129,19 +129,19 @@ def test_scalp_coupling_index_multi_wavelength(multi_wavelength_raw):
     expected.extend([-1.0] * 3)
 
     # exact results unknown
-    # group 7: 1 uncorrelated signal out of 3
+    # group 7: 1 uncorrelated signal out of 3; sci < 0.5
     raw._data[18] = signal
     raw._data[19] = rng.random(signal.shape)
     raw._data[20] = signal
-    # group 8: 2 uncorrelated signals out of 3
+    # group 8: 2 uncorrelated signals out of 3; sci < 0.5
     raw._data[21] = rng.random(signal.shape)
     raw._data[22] = rng.random(signal.shape)
     raw._data[23] = signal
-    # group 9: 3 uncorrelated signals
+    # group 9: 3 uncorrelated signals; sci < 0.5
     raw._data[24] = rng.random(signal.shape)
     raw._data[25] = rng.random(signal.shape)
     raw._data[26] = rng.random(signal.shape)
-    # groups 10-12: ordering invariance
+    # groups 10-12: ordering invariance; all must be the same
     rand1 = rng.random(signal.shape)
     rand2 = rng.random(signal.shape)
     rand3 = rng.random(signal.shape)
