@@ -30,7 +30,7 @@ def multi_wavelength_raw(request: pytest.FixtureRequest) -> RawArray:
         ch_names=ch_names, ch_types="fnirs_cw_amplitude", sfreq=sampling_freq
     )
     raw = RawArray(data, info, verbose=True)
-    for ii, (ch, freq) in enumerate(zip(raw.info["chs"], freqs * len(ch_names))):
+    for ii, (ch, freq) in enumerate(zip(raw.info["chs"], freqs * n_pairs)):
         ch["loc"][9] = freq
         ch["loc"][3:6] = (ii // 3 * 0.01, 0.0, 0.0)
         ch["loc"][6:9] = (ii // 3 * 0.01, 0.03, 0.0)
